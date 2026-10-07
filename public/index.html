@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>P2P Local File Transfer</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="/socket.io/socket.io.js"></script>
+</head>
+<body>
+  <div class="container">
+    <h2>P2P Local File Transfer</h2>
+    
+    <!-- Connection Section -->
+    <div class="card">
+      <input type="text" id="roomId" placeholder="Enter Room ID (e.g. 1234)">
+      <button id="joinBtn">Connect Room</button>
+      <p id="status">Status: Disconnected</p>
+    </div>
+
+    <!-- File Send Section -->
+    <div class="card">
+      <input type="file" id="fileInput" disabled>
+      <button id="sendBtn" disabled>Send File</button>
+      <div class="progress-box">
+        <label>Transfer Progress:</label>
+        <progress id="progressBar" value="0" max="100"></progress>
+        <span id="progressText">0%</span>
+      </div>
+    </div>
+  </div>
+
+  <script src="client.js"></script>
+</body>
+</html>
