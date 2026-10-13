@@ -3,57 +3,290 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>AirLink | P2P Secure File Share</title>
-  <!-- Google Fonts -->
+  <title>AirLink Drop | WebRTC P2P Transfer</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css" />
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <script src="/socket.io/socket.io.js"></script>
+
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+      font-family: 'Plus Jakarta Sans', sans-serif;
+    }
+
+    body {
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #090d16;
+      background-image: 
+        radial-gradient(at 0% 0%, rgba(99, 102, 241, 0.25) 0px, transparent 50%),
+        radial-gradient(at 100% 100%, rgba(168, 85, 247, 0.2) 0px, transparent 50%);
+      color: #f8fafc;
+      padding: 24px 16px;
+    }
+
+    .main-card {
+      width: 100%;
+      max-width: 440px;
+      background: rgba(18, 24, 38, 0.85);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border-radius: 28px;
+      padding: 32px 28px;
+      box-shadow: 0 25px 60px -15px rgba(0, 0, 0, 0.7);
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 14px;
+      border-radius: 999px;
+      background: rgba(99, 102, 241, 0.15);
+      border: 1px solid rgba(99, 102, 241, 0.3);
+      color: #818cf8;
+      font-size: 0.75rem;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+      margin-bottom: 16px;
+    }
+
+    .header h1 {
+      font-size: 1.85rem;
+      font-weight: 800;
+      letter-spacing: -0.5px;
+      background: linear-gradient(135deg, #ffffff 0%, #cbd5e1 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      margin-bottom: 6px;
+    }
+
+    .header p {
+      color: #94a3b8;
+      font-size: 0.88rem;
+      line-height: 1.4;
+      margin-bottom: 28px;
+    }
+
+    .box-container {
+      background: rgba(11, 15, 25, 0.6);
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      border-radius: 20px;
+      padding: 18px;
+      margin-bottom: 20px;
+    }
+
+    .box-label {
+      display: block;
+      font-size: 0.75rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      color: #64748b;
+      margin-bottom: 12px;
+    }
+
+    .room-bar {
+      display: flex;
+      gap: 10px;
+    }
+
+    input[type="text"] {
+      flex: 1;
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 12px;
+      padding: 12px 16px;
+      color: #fff;
+      font-size: 0.95rem;
+      outline: none;
+      transition: all 0.2s ease;
+    }
+
+    input[type="text"]:focus {
+      border-color: #6366f1;
+      box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.25);
+    }
+
+    .connect-btn {
+      background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%);
+      color: #fff;
+      font-weight: 700;
+      font-size: 0.9rem;
+      border: none;
+      border-radius: 12px;
+      padding: 0 20px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .connect-btn:hover {
+      filter: brightness(1.15);
+      transform: translateY(-1px);
+    }
+
+    .status-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 12px;
+      font-size: 0.82rem;
+      color: #94a3b8;
+    }
+
+    .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #ef4444;
+      box-shadow: 0 0 8px rgba(239, 68, 68, 0.5);
+    }
+
+    .dot.connected {
+      background: #10b981;
+      box-shadow: 0 0 10px #10b981;
+    }
+
+    .upload-zone {
+      position: relative;
+      border: 2px dashed rgba(255, 255, 255, 0.15);
+      border-radius: 16px;
+      padding: 24px 16px;
+      text-align: center;
+      background: rgba(255, 255, 255, 0.02);
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .upload-zone:hover {
+      border-color: #6366f1;
+      background: rgba(99, 102, 241, 0.05);
+    }
+
+    .upload-zone input[type="file"] {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      opacity: 0;
+      cursor: pointer;
+    }
+
+    .upload-icon {
+      font-size: 2rem;
+      margin-bottom: 8px;
+      display: block;
+    }
+
+    .upload-text {
+      font-size: 0.88rem;
+      color: #cbd5e1;
+      font-weight: 500;
+    }
+
+    .send-btn {
+      width: 100%;
+      margin-top: 14px;
+      padding: 14px;
+      border-radius: 14px;
+      border: none;
+      font-size: 0.95rem;
+      font-weight: 700;
+      color: #fff;
+      background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+      box-shadow: 0 10px 20px -5px rgba(99, 102, 241, 0.5);
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .send-btn:hover:not(:disabled) {
+      filter: brightness(1.1);
+      transform: translateY(-2px);
+    }
+
+    .send-btn:disabled {
+      background: rgba(255, 255, 255, 0.08);
+      color: #64748b;
+      cursor: not-allowed;
+      box-shadow: none;
+    }
+
+    .progress-bar-container {
+      margin-top: 14px;
+      display: none;
+    }
+
+    .bar-bg {
+      width: 100%;
+      height: 8px;
+      background: rgba(255, 255, 255, 0.08);
+      border-radius: 999px;
+      overflow: hidden;
+    }
+
+    .bar-fill {
+      width: 0%;
+      height: 100%;
+      background: linear-gradient(90deg, #6366f1, #10b981);
+      transition: width 0.2s;
+    }
+
+    .progress-percent {
+      font-size: 0.78rem;
+      color: #94a3b8;
+      text-align: right;
+      margin-top: 6px;
+    }
+  </style>
 </head>
 <body>
-  <div class="glow-bg"></div>
 
-  <main class="app-card">
-    <header class="app-header">
-      <div class="logo-badge">⚡ WebRTC P2P</div>
+  <div class="main-card">
+    <div class="header">
+      <div class="badge">⚡ DIRECT WEBRTC P2P</div>
       <h1>AirLink Drop</h1>
-      <p>Direct browser-to-browser encrypted file transfer.</p>
-    </header>
+      <p>Direct peer-to-peer file transfer without cloud storage.</p>
+    </div>
 
-    <!-- Room Section -->
-    <section class="section-box">
-      <label for="roomInput">Room Connection</label>
-      <div class="input-group">
-        <input type="text" id="roomInput" placeholder="Enter Room ID (e.g. 777)" />
-        <button id="connectBtn" class="primary-btn">Connect</button>
+    <!-- Room Connect -->
+    <div class="box-container">
+      <span class="box-label">Connection Channel</span>
+      <div class="room-bar">
+        <input type="text" id="roomInput" placeholder="Room ID (e.g. 777)" />
+        <button id="connectBtn" class="connect-btn">Join</button>
       </div>
-      <div class="status-container">
-        <span class="status-indicator" id="statusDot"></span>
+      <div class="status-row">
+        <div class="dot" id="statusDot"></div>
         <span id="statusText">Disconnected</span>
       </div>
-    </section>
+    </div>
 
-    <!-- Transfer Section -->
-    <section class="section-box transfer-box" id="transferSection">
-      <label>Choose File to Share</label>
-      <div class="file-drop-area">
+    <!-- File Send -->
+    <div class="box-container">
+      <span class="box-label">Select File</span>
+      <div class="upload-zone">
         <input type="file" id="fileInput" />
-        <span class="file-dummy-text" id="fileLabel">📁 Click or drop a file here</span>
+        <span class="upload-icon">📂</span>
+        <span class="upload-text" id="fileLabel">Click or drop file to share</span>
       </div>
-      <button id="sendBtn" class="action-btn" disabled>Send File</button>
+      
+      <button id="sendBtn" class="send-btn" disabled>Send File</button>
 
-      <!-- Progress Bar -->
-      <div class="progress-wrapper">
-        <div class="progress-bar-bg">
-          <div class="progress-bar-fill" id="progressFill"></div>
+      <div class="progress-bar-container" id="progressWrapper">
+        <div class="bar-bg">
+          <div class="bar-fill" id="progressFill"></div>
         </div>
-        <div class="progress-meta">
-          <span id="progressText">0%</span>
-        </div>
+        <div class="progress-percent" id="progressText">0%</div>
       </div>
-    </section>
-  </main>
+    </div>
+  </div>
 
   <script src="client.js"></script>
 </body>
