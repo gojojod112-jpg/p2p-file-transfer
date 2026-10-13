@@ -1,34 +1,59 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>P2P Local File Transfer</title>
-  <link rel="stylesheet" href="style.css">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AirLink | P2P Secure File Share</title>
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css" />
   <script src="/socket.io/socket.io.js"></script>
 </head>
 <body>
-  <div class="container">
-    <h2>P2P Local File Transfer</h2>
-    
-    <!-- Connection Section -->
-    <div class="card">
-      <input type="text" id="roomId" placeholder="Enter Room ID (e.g. 1234)">
-      <button id="joinBtn">Connect Room</button>
-      <p id="status">Status: Disconnected</p>
-    </div>
+  <div class="glow-bg"></div>
 
-    <!-- File Send Section -->
-    <div class="card">
-      <input type="file" id="fileInput" disabled>
-      <button id="sendBtn" disabled>Send File</button>
-      <div class="progress-box">
-        <label>Transfer Progress:</label>
-        <progress id="progressBar" value="0" max="100"></progress>
-        <span id="progressText">0%</span>
+  <main class="app-card">
+    <header class="app-header">
+      <div class="logo-badge">⚡ WebRTC P2P</div>
+      <h1>AirLink Drop</h1>
+      <p>Direct browser-to-browser encrypted file transfer.</p>
+    </header>
+
+    <!-- Room Section -->
+    <section class="section-box">
+      <label for="roomInput">Room Connection</label>
+      <div class="input-group">
+        <input type="text" id="roomInput" placeholder="Enter Room ID (e.g. 777)" />
+        <button id="connectBtn" class="primary-btn">Connect</button>
       </div>
-    </div>
-  </div>
+      <div class="status-container">
+        <span class="status-indicator" id="statusDot"></span>
+        <span id="statusText">Disconnected</span>
+      </div>
+    </section>
+
+    <!-- Transfer Section -->
+    <section class="section-box transfer-box" id="transferSection">
+      <label>Choose File to Share</label>
+      <div class="file-drop-area">
+        <input type="file" id="fileInput" />
+        <span class="file-dummy-text" id="fileLabel">📁 Click or drop a file here</span>
+      </div>
+      <button id="sendBtn" class="action-btn" disabled>Send File</button>
+
+      <!-- Progress Bar -->
+      <div class="progress-wrapper">
+        <div class="progress-bar-bg">
+          <div class="progress-bar-fill" id="progressFill"></div>
+        </div>
+        <div class="progress-meta">
+          <span id="progressText">0%</span>
+        </div>
+      </div>
+    </section>
+  </main>
 
   <script src="client.js"></script>
 </body>
