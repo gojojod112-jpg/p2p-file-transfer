@@ -1,7 +1,10 @@
 const socket = io();
 
-let localConnection;
-let sendChannel;
+let peerConnection = null;
+let dataChannel = null;
+let currentRoom = '';
+let iceCandidateQueue = [];
+
 let receiveBuffer = [];
 let receivedSize = 0;
 let incomingFileInfo = null;
@@ -18,87 +21,113 @@ const progressWrapper = document.getElementById('progressWrapper');
 const progressFill = document.getElementById('progressFill');
 const progressText = document.getElementById('progressText');
 
-let currentRoom = '';
-
-// ICE Servers (Crucial for Mobile-to-Laptop & cross-network)
 const rtcConfig = {
   iceServers: [
     { urls: 'stun:stun.l.google.com:19302' },
-    { urls: 'stun:stun1.l.google.com:19302' }
+    { urls: 'stun:stun1.l.google.com:19302' },
+    { urls: 'stun:stun2.l.google.com:19302' }
   ]
 };
+
+function updateStatus(text, state) {
+  statusText.innerText = text;
+  if (state === 'connected') {
+    statusDot.classList.add('connected');
+  } else {
+    statusDot.classList.remove('connected');
+  }
+}
 
 // 1. Join Room
 connectBtn.addEventListener('click', () => {
   const room = roomInput.value.trim();
   if (!room) {
-    alert('Please enter a Room ID');
+    alert('Please enter Room ID');
     return;
   }
   currentRoom = room;
-  socket.emit('join-room', room);
-  updateStatus('Joining room...', 'pending');
+  socket.emit('join-room', currentRoom);
+  updateStatus('Waiting for peer in room...', 'pending');
 });
 
-// 2. Peer signaling
+// 2. Caller Side (Existing user detects new user)
 socket.on('user-connected', async () => {
-  updateStatus('Peer found. Connecting...', 'pending');
-  createPeerConnection();
+  updateStatus('Peer found. Handshaking...', 'pending');
+  createPeer(true);
 
-  sendChannel = localConnection.createDataChannel('fileTransfer');
-  setupDataChannel(sendChannel);
-
-  const offer = await localConnection.createOffer();
-  await localConnection.setLocalDescription(offer);
-  socket.emit('signal', { room: currentRoom, signal: { type: 'offer', sdp: offer } });
+  try {
+    const offer = await peerConnection.createOffer();
+    await peerConnection.setLocalDescription(offer);
+    socket.emit('signal', { room: currentRoom, signal: { offer } });
+  } catch (err) {
+    console.error('Error creating offer:', err);
+  }
 });
 
-socket.on('signal', async (data) => {
-  const { signal } = data;
+// 3. Signaling Handler
+socket.on('signal', async (signal) => {
+  if (signal.offer) {
+    updateStatus('Connecting with peer...', 'pending');
+    createPeer(false);
 
-  if (signal.type === 'offer') {
-    createPeerConnection();
+    await peerConnection.setRemoteDescription(new RTCSessionDescription(signal.offer));
+    
+    // Process queued candidates
+    while (iceCandidateQueue.length > 0) {
+      const cand = iceCandidateQueue.shift();
+      await peerConnection.addIceCandidate(cand);
+    }
 
-    localConnection.ondatachannel = (event) => {
-      sendChannel = event.channel;
-      setupDataChannel(sendChannel);
-    };
+    const answer = await peerConnection.createAnswer();
+    await peerConnection.setLocalDescription(answer);
+    socket.emit('signal', { room: currentRoom, signal: { answer } });
 
-    await localConnection.setRemoteDescription(new RTCSessionDescription(signal.sdp));
-    const answer = await localConnection.createAnswer();
-    await localConnection.setLocalDescription(answer);
-    socket.emit('signal', { room: currentRoom, signal: { type: 'answer', sdp: answer } });
-  } else if (signal.type === 'answer') {
-    await localConnection.setRemoteDescription(new RTCSessionDescription(signal.sdp));
+  } else if (signal.answer) {
+    await peerConnection.setRemoteDescription(new RTCSessionDescription(signal.answer));
+    
+    while (iceCandidateQueue.length > 0) {
+      const cand = iceCandidateQueue.shift();
+      await peerConnection.addIceCandidate(cand);
+    }
+
   } else if (signal.candidate) {
-    try {
-      if (localConnection) {
-        await localConnection.addIceCandidate(new RTCIceCandidate(signal.candidate));
-      }
-    } catch (err) {
-      console.error('Error adding ICE candidate:', err);
+    const candidate = new RTCIceCandidate(signal.candidate);
+    if (peerConnection && peerConnection.remoteDescription) {
+      await peerConnection.addIceCandidate(candidate);
+    } else {
+      iceCandidateQueue.push(candidate);
     }
   }
 });
 
-function createPeerConnection() {
-  localConnection = new RTCPeerConnection(rtcConfig);
+function createPeer(isInitiator) {
+  peerConnection = new RTCPeerConnection(rtcConfig);
 
-  localConnection.onicecandidate = (event) => {
+  peerConnection.onicecandidate = (event) => {
     if (event.candidate) {
       socket.emit('signal', { room: currentRoom, signal: { candidate: event.candidate } });
     }
   };
 
-  localConnection.onconnectionstatechange = () => {
-    if (localConnection.connectionState === 'connected') {
+  peerConnection.onconnectionstatechange = () => {
+    if (peerConnection.connectionState === 'connected') {
       updateStatus('Connected & Ready', 'connected');
       if (fileInput.files.length > 0) sendBtn.disabled = false;
-    } else if (localConnection.connectionState === 'disconnected' || localConnection.connectionState === 'failed') {
+    } else if (['disconnected', 'failed', 'closed'].includes(peerConnection.connectionState)) {
       updateStatus('Disconnected', 'error');
       sendBtn.disabled = true;
     }
   };
+
+  if (isInitiator) {
+    dataChannel = peerConnection.createDataChannel('fileTransfer');
+    setupDataChannel(dataChannel);
+  } else {
+    peerConnection.ondatachannel = (event) => {
+      dataChannel = event.channel;
+      setupDataChannel(dataChannel);
+    };
+  }
 }
 
 function setupDataChannel(channel) {
@@ -117,38 +146,37 @@ function setupDataChannel(channel) {
   channel.onmessage = handleReceiveMessage;
 }
 
-// 3. File Selection & Transfer
+// File Input
 fileInput.addEventListener('change', () => {
   if (fileInput.files.length > 0) {
     fileLabel.innerText = '📄 ' + fileInput.files[0].name;
-    if (localConnection && localConnection.connectionState === 'connected') {
+    if (dataChannel && dataChannel.readyState === 'open') {
       sendBtn.disabled = false;
     }
   }
 });
 
+// File Sending Logic
 sendBtn.addEventListener('click', () => {
   const file = fileInput.files[0];
-  if (!file) return;
+  if (!file || !dataChannel || dataChannel.readyState !== 'open') return;
 
   progressWrapper.style.display = 'block';
   sendBtn.disabled = true;
 
-  // Send metadata first
-  sendChannel.send(JSON.stringify({
+  dataChannel.send(JSON.stringify({
     type: 'metadata',
     name: file.name,
     size: file.size,
     mime: file.type
   }));
 
-  // Chunking (16KB chunks)
-  const chunkSize = 16384;
+  const chunkSize = 16384; // 16 KB chunks
   let offset = 0;
   const reader = new FileReader();
 
   reader.onload = (e) => {
-    sendChannel.send(e.target.result);
+    dataChannel.send(e.target.result);
     offset += e.target.result.byteLength;
 
     const percent = Math.min(100, Math.round((offset / file.size) * 100));
@@ -175,7 +203,7 @@ sendBtn.addEventListener('click', () => {
   readSlice(0);
 });
 
-// 4. File Receiver Logic
+// File Receiving Logic
 function handleReceiveMessage(event) {
   if (typeof event.data === 'string') {
     const meta = JSON.parse(event.data);
@@ -188,7 +216,6 @@ function handleReceiveMessage(event) {
     return;
   }
 
-  // Binary data chunk
   receiveBuffer.push(event.data);
   receivedSize += event.data.byteLength;
 
@@ -199,7 +226,12 @@ function handleReceiveMessage(event) {
 
     if (receivedSize >= incomingFileInfo.size) {
       const receivedBlob = new Blob(receiveBuffer, { type: incomingFileInfo.mime });
-      downloadBlob(receivedBlob, incomingFileInfo.name);
+      const downloadLink = document.createElement('a');
+      downloadLink.href = URL.createObjectURL(receivedBlob);
+      downloadLink.download = incomingFileInfo.name;
+      document.body.appendChild(downloadLink);
+      downloadLink.click();
+      downloadLink.remove();
 
       receiveBuffer = [];
       receivedSize = 0;
@@ -209,23 +241,5 @@ function handleReceiveMessage(event) {
         progressFill.style.width = '0%';
       }, 1000);
     }
-  }
-}
-
-function downloadBlob(blob, filename) {
-  const downloadLink = document.createElement('a');
-  downloadLink.href = URL.createObjectURL(blob);
-  downloadLink.download = filename;
-  document.body.appendChild(downloadLink);
-  downloadLink.click();
-  downloadLink.remove();
-}
-
-function updateStatus(text, state) {
-  statusText.innerText = text;
-  if (state === 'connected') {
-    statusDot.classList.add('connected');
-  } else {
-    statusDot.classList.remove('connected');
   }
 }
