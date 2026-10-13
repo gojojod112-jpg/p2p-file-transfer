@@ -1,163 +1,231 @@
 const socket = io();
-let localPeerConnection;
-let dataChannel;
-let currentRoomId = '';
 
-const statusText = document.getElementById('status');
-const joinBtn = document.getElementById('joinBtn');
-const roomIdInput = document.getElementById('roomId');
+let localConnection;
+let sendChannel;
+let receiveBuffer = [];
+let receivedSize = 0;
+let incomingFileInfo = null;
+
+// DOM Elements
+const roomInput = document.getElementById('roomInput');
+const connectBtn = document.getElementById('connectBtn');
+const statusText = document.getElementById('statusText');
+const statusDot = document.getElementById('statusDot');
 const fileInput = document.getElementById('fileInput');
+const fileLabel = document.getElementById('fileLabel');
 const sendBtn = document.getElementById('sendBtn');
-const progressBar = document.getElementById('progressBar');
+const progressWrapper = document.getElementById('progressWrapper');
+const progressFill = document.getElementById('progressFill');
 const progressText = document.getElementById('progressText');
 
-// STUN server connection routes dhoondne ke liye
-const iceServers = {
-  iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+let currentRoom = '';
+
+// ICE Servers (Crucial for Mobile-to-Laptop & cross-network)
+const rtcConfig = {
+  iceServers: [
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'stun:stun1.l.google.com:19302' }
+  ]
 };
 
 // 1. Join Room
-joinBtn.onclick = () => {
-  currentRoomId = roomIdInput.value.trim();
-  if (!currentRoomId) return alert('Enter a room ID');
-  socket.emit('join-room', currentRoomId);
-  statusText.innerText = 'Status: Waiting for peer...';
-  joinBtn.disabled = true;
-};
-
-// 2. Peer setup function
-function setupPeer(isInitiator) {
-  localPeerConnection = new RTCPeerConnection(iceServers);
-
-  localPeerConnection.onicecandidate = (event) => {
-    if (event.candidate) {
-      socket.emit('ice-candidate', {
-        roomId: currentRoomId,
-        candidate: event.candidate
-      });
-    }
-  };
-
-  if (isInitiator) {
-    // Sender side DataChannel banata hai
-    dataChannel = localPeerConnection.createDataChannel('fileTransfer');
-    setupDataChannelEvents();
-  } else {
-    // Receiver side DataChannel receive karta hai
-    localPeerConnection.ondatachannel = (event) => {
-      dataChannel = event.channel;
-      setupDataChannelEvents();
-    };
+connectBtn.addEventListener('click', () => {
+  const room = roomInput.value.trim();
+  if (!room) {
+    alert('Please enter a Room ID');
+    return;
   }
-}
+  currentRoom = room;
+  socket.emit('join-room', room);
+  updateStatus('Joining room...', 'pending');
+});
 
-// 3. Signaling Listeners
+// 2. Peer signaling
 socket.on('user-connected', async () => {
-  statusText.innerText = 'Status: Connecting with peer...';
-  setupPeer(true);
+  updateStatus('Peer found. Connecting...', 'pending');
+  createPeerConnection();
 
-  const offer = await localPeerConnection.createOffer();
-  await localPeerConnection.setLocalDescription(offer);
+  sendChannel = localConnection.createDataChannel('fileTransfer');
+  setupDataChannel(sendChannel);
 
-  socket.emit('offer', { roomId: currentRoomId, offer });
+  const offer = await localConnection.createOffer();
+  await localConnection.setLocalDescription(offer);
+  socket.emit('signal', { room: currentRoom, signal: { type: 'offer', sdp: offer } });
 });
 
-socket.on('offer', async (data) => {
-  setupPeer(false);
-  await localPeerConnection.setRemoteDescription(new RTCSessionDescription(data.offer));
+socket.on('signal', async (data) => {
+  const { signal } = data;
 
-  const answer = await localPeerConnection.createAnswer();
-  await localPeerConnection.setLocalDescription(answer);
+  if (signal.type === 'offer') {
+    createPeerConnection();
 
-  socket.emit('answer', { roomId: currentRoomId, answer });
-});
+    localConnection.ondatachannel = (event) => {
+      sendChannel = event.channel;
+      setupDataChannel(sendChannel);
+    };
 
-socket.on('answer', async (data) => {
-  await localPeerConnection.setRemoteDescription(new RTCSessionDescription(data.answer));
-});
-
-socket.on('ice-candidate', async (data) => {
-  try {
-    await localPeerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
-  } catch (err) {
-    console.error('Error adding ICE candidate', err);
+    await localConnection.setRemoteDescription(new RTCSessionDescription(signal.sdp));
+    const answer = await localConnection.createAnswer();
+    await localConnection.setLocalDescription(answer);
+    socket.emit('signal', { room: currentRoom, signal: { type: 'answer', sdp: answer } });
+  } else if (signal.type === 'answer') {
+    await localConnection.setRemoteDescription(new RTCSessionDescription(signal.sdp));
+  } else if (signal.candidate) {
+    try {
+      if (localConnection) {
+        await localConnection.addIceCandidate(new RTCIceCandidate(signal.candidate));
+      }
+    } catch (err) {
+      console.error('Error adding ICE candidate:', err);
+    }
   }
 });
 
-// 4. DataChannel Events & File Handling
-let receivedBuffers = [];
-let receivedFileSize = 0;
-let metaData = null;
+function createPeerConnection() {
+  localConnection = new RTCPeerConnection(rtcConfig);
 
-function setupDataChannelEvents() {
-  dataChannel.binaryType = 'arraybuffer';
-
-  dataChannel.onopen = () => {
-    statusText.innerText = 'Status: Connected! Ready to transfer.';
-    fileInput.disabled = false;
-    sendBtn.disabled = false;
+  localConnection.onicecandidate = (event) => {
+    if (event.candidate) {
+      socket.emit('signal', { room: currentRoom, signal: { candidate: event.candidate } });
+    }
   };
 
-  dataChannel.onmessage = (event) => {
-    // String message matlab File Metadata hai
-    if (typeof event.data === 'string') {
-      metaData = JSON.parse(event.data);
-      receivedBuffers = [];
-      receivedFileSize = 0;
-      return;
-    }
-
-    // Binary chunk receive karna
-    receivedBuffers.push(event.data);
-    receivedFileSize += event.data.byteLength;
-
-    const percent = Math.round((receivedFileSize / metaData.size) * 100);
-    progressBar.value = percent;
-    progressText.innerText = `${percent}%`;
-
-    // File transfer complete hone par download trigger karein
-    if (receivedFileSize === metaData.size) {
-      const blob = new Blob(receivedBuffers);
-      const downloadLink = document.createElement('a');
-      downloadLink.href = URL.createObjectURL(blob);
-      downloadLink.download = metaData.name;
-      downloadLink.click();
-      statusText.innerText = `Received file: ${metaData.name}`;
+  localConnection.onconnectionstatechange = () => {
+    if (localConnection.connectionState === 'connected') {
+      updateStatus('Connected & Ready', 'connected');
+      if (fileInput.files.length > 0) sendBtn.disabled = false;
+    } else if (localConnection.connectionState === 'disconnected' || localConnection.connectionState === 'failed') {
+      updateStatus('Disconnected', 'error');
+      sendBtn.disabled = true;
     }
   };
 }
 
-// 5. File Send Logic (Chunking)
-sendBtn.onclick = () => {
+function setupDataChannel(channel) {
+  channel.binaryType = 'arraybuffer';
+
+  channel.onopen = () => {
+    updateStatus('Connected & Ready', 'connected');
+    if (fileInput.files.length > 0) sendBtn.disabled = false;
+  };
+
+  channel.onclose = () => {
+    updateStatus('Disconnected', 'error');
+    sendBtn.disabled = true;
+  };
+
+  channel.onmessage = handleReceiveMessage;
+}
+
+// 3. File Selection & Transfer
+fileInput.addEventListener('change', () => {
+  if (fileInput.files.length > 0) {
+    fileLabel.innerText = '📄 ' + fileInput.files[0].name;
+    if (localConnection && localConnection.connectionState === 'connected') {
+      sendBtn.disabled = false;
+    }
+  }
+});
+
+sendBtn.addEventListener('click', () => {
   const file = fileInput.files[0];
-  if (!file) return alert('Select a file first');
+  if (!file) return;
 
-  // Pehle metadata bhejo
-  dataChannel.send(JSON.stringify({ name: file.name, size: file.size }));
+  progressWrapper.style.display = 'block';
+  sendBtn.disabled = true;
 
-  const chunkSize = 16384; // 16 KB chunks
+  // Send metadata first
+  sendChannel.send(JSON.stringify({
+    type: 'metadata',
+    name: file.name,
+    size: file.size,
+    mime: file.type
+  }));
+
+  // Chunking (16KB chunks)
+  const chunkSize = 16384;
   let offset = 0;
-  const fileReader = new FileReader();
+  const reader = new FileReader();
 
-  fileReader.onload = (e) => {
-    dataChannel.send(e.target.result);
+  reader.onload = (e) => {
+    sendChannel.send(e.target.result);
     offset += e.target.result.byteLength;
 
-    const percent = Math.round((offset / file.size) * 100);
-    progressBar.value = percent;
-    progressText.innerText = `${percent}%`;
+    const percent = Math.min(100, Math.round((offset / file.size) * 100));
+    progressFill.style.width = percent + '%';
+    progressText.innerText = percent + '%';
 
     if (offset < file.size) {
-      readNextChunk();
+      readSlice(offset);
     } else {
-      statusText.innerText = 'Status: File sent successfully!';
+      setTimeout(() => {
+        alert('File sent successfully!');
+        progressWrapper.style.display = 'none';
+        progressFill.style.width = '0%';
+        sendBtn.disabled = false;
+      }, 500);
     }
   };
 
-  function readNextChunk() {
-    const slice = file.slice(offset, offset + chunkSize);
-    fileReader.readAsArrayBuffer(slice);
+  const readSlice = (o) => {
+    const slice = file.slice(o, o + chunkSize);
+    reader.readAsArrayBuffer(slice);
+  };
+
+  readSlice(0);
+});
+
+// 4. File Receiver Logic
+function handleReceiveMessage(event) {
+  if (typeof event.data === 'string') {
+    const meta = JSON.parse(event.data);
+    if (meta.type === 'metadata') {
+      incomingFileInfo = meta;
+      receiveBuffer = [];
+      receivedSize = 0;
+      progressWrapper.style.display = 'block';
+    }
+    return;
   }
 
-  readNextChunk();
-};
+  // Binary data chunk
+  receiveBuffer.push(event.data);
+  receivedSize += event.data.byteLength;
+
+  if (incomingFileInfo) {
+    const percent = Math.min(100, Math.round((receivedSize / incomingFileInfo.size) * 100));
+    progressFill.style.width = percent + '%';
+    progressText.innerText = percent + '%';
+
+    if (receivedSize >= incomingFileInfo.size) {
+      const receivedBlob = new Blob(receiveBuffer, { type: incomingFileInfo.mime });
+      downloadBlob(receivedBlob, incomingFileInfo.name);
+
+      receiveBuffer = [];
+      receivedSize = 0;
+      incomingFileInfo = null;
+      setTimeout(() => {
+        progressWrapper.style.display = 'none';
+        progressFill.style.width = '0%';
+      }, 1000);
+    }
+  }
+}
+
+function downloadBlob(blob, filename) {
+  const downloadLink = document.createElement('a');
+  downloadLink.href = URL.createObjectURL(blob);
+  downloadLink.download = filename;
+  document.body.appendChild(downloadLink);
+  downloadLink.click();
+  downloadLink.remove();
+}
+
+function updateStatus(text, state) {
+  statusText.innerText = text;
+  if (state === 'connected') {
+    statusDot.classList.add('connected');
+  } else {
+    statusDot.classList.remove('connected');
+  }
+}
