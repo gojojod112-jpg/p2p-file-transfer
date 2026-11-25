@@ -59,6 +59,9 @@ connectBtn.addEventListener('click', () => {
   socket.emit('join-room', currentRoom);
   updateStatus('Waiting for peer in room...', 'pending');
 });
+roomInput.addEventListener('keypress', (e) => {
+  if (e.key === 'Enter') connectBtn.click();
+});
 
 // 2. Caller Side
 socket.on('user-connected', async () => {
