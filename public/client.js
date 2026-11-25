@@ -117,7 +117,23 @@ function createPeer(isInitiator) {
       socket.emit('signal', { room: currentRoom, signal: { candidate: event.candidate } });
     }
   };
+function setupDataChannel(channel) {
+  channel.binaryType = 'arraybuffer';
+  // 1MB low threshold taaki pipe kabhi dry na ho
+  channel.bufferedAmountLowThreshold = 1048576;
 
+  channel.onopen = () => {
+    updateStatus('Connected & Ready', 'connected');
+    if (fileInput.files.length > 0) sendBtn.disabled = false;
+  };
+
+  channel.onclose = () => {
+    updateStatus('Disconnected', 'error');
+    sendBtn.disabled = true;
+  };
+
+  channel.onmessage = handleReceiveMessage;
+}
   peerConnection.onconnectionstatechange = () => {
     if (peerConnection.connectionState === 'connected') {
       updateStatus('Connected & Ready', 'connected');
