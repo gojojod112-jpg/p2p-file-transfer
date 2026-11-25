@@ -1,17 +1,25 @@
 const socket = io();
 
+const NUM_CHANNELS = 4; // 4 parallel WebRTC channels for maximum throughput
 let peerConnection = null;
-let dataChannel = null;
+let dataChannels = [];
+let openChannelsCount = 0;
 let currentRoom = '';
 let iceCandidateQueue = [];
 
-let receiveBuffer = [];
+// File Receive & Sync State
+let receiveArray = null;
 let receivedSize = 0;
 let incomingFileInfo = null;
+let transferStartTime = 0;
+let lastAckPercent = 0;
+let onTransferCompleteAck = null;
 
 // DOM Elements
 const roomInput = document.getElementById('roomInput');
 const connectBtn = document.getElementById('connectBtn');
+const copyRoomBtn = document.getElementById('copyRoomBtn');
+const activeRoomLabel = document.getElementById('activeRoomLabel');
 const statusText = document.getElementById('statusText');
 const statusDot = document.getElementById('statusDot');
 const fileInput = document.getElementById('fileInput');
@@ -19,7 +27,8 @@ const fileLabel = document.getElementById('fileLabel');
 const sendBtn = document.getElementById('sendBtn');
 const progressWrapper = document.getElementById('progressWrapper');
 const progressFill = document.getElementById('progressFill');
-const progressText = document.getElementById('progressText');
+const progressStatus = document.getElementById('progressStatus');
+const speedText = document.getElementById('speedText');
 
 // Chat DOM Elements
 const chatBox = document.getElementById('chatBox');
@@ -56,11 +65,20 @@ connectBtn.addEventListener('click', () => {
     return;
   }
   currentRoom = room;
+  activeRoomLabel.innerText = room;
+  copyRoomBtn.style.display = 'inline-flex';
   socket.emit('join-room', currentRoom);
   updateStatus('Waiting for peer in room...', 'pending');
 });
+
 roomInput.addEventListener('keypress', (e) => {
   if (e.key === 'Enter') connectBtn.click();
+});
+
+copyRoomBtn.addEventListener('click', () => {
+  navigator.clipboard.writeText(currentRoom);
+  activeRoomLabel.innerText = currentRoom + ' (Copied!)';
+  setTimeout(() => { activeRoomLabel.innerText = currentRoom; }, 1500);
 });
 
 // 2. Caller Side
@@ -84,10 +102,8 @@ socket.on('signal', async (signal) => {
     createPeer(false);
 
     await peerConnection.setRemoteDescription(new RTCSessionDescription(signal.offer));
-    
     while (iceCandidateQueue.length > 0) {
-      const cand = iceCandidateQueue.shift();
-      await peerConnection.addIceCandidate(cand);
+      await peerConnection.addIceCandidate(iceCandidateQueue.shift());
     }
 
     const answer = await peerConnection.createAnswer();
@@ -96,10 +112,8 @@ socket.on('signal', async (signal) => {
 
   } else if (signal.answer) {
     await peerConnection.setRemoteDescription(new RTCSessionDescription(signal.answer));
-    
     while (iceCandidateQueue.length > 0) {
-      const cand = iceCandidateQueue.shift();
-      await peerConnection.addIceCandidate(cand);
+      await peerConnection.addIceCandidate(iceCandidateQueue.shift());
     }
 
   } else if (signal.candidate) {
@@ -113,6 +127,8 @@ socket.on('signal', async (signal) => {
 });
 
 function createPeer(isInitiator) {
+  dataChannels = [];
+  openChannelsCount = 0;
   peerConnection = new RTCPeerConnection(rtcConfig);
 
   peerConnection.onicecandidate = (event) => {
@@ -122,37 +138,43 @@ function createPeer(isInitiator) {
   };
 
   peerConnection.onconnectionstatechange = () => {
-    if (peerConnection.connectionState === 'connected') {
-      updateStatus('Connected & Ready', 'connected');
-      if (fileInput.files.length > 0) sendBtn.disabled = false;
-    } else if (['disconnected', 'failed', 'closed'].includes(peerConnection.connectionState)) {
+    if (['disconnected', 'failed', 'closed'].includes(peerConnection.connectionState)) {
       updateStatus('Disconnected', 'error');
       sendBtn.disabled = true;
     }
   };
 
   if (isInitiator) {
-    dataChannel = peerConnection.createDataChannel('fileTransfer');
-    setupDataChannel(dataChannel);
+    // Channel 0: Ordered for control/chat; Channels 1..3: Unordered for max-speed parallel chunks
+    for (let i = 0; i < NUM_CHANNELS; i++) {
+      const ch = peerConnection.createDataChannel(`turbo_${i}`, { ordered: i === 0 });
+      setupDataChannel(ch, i);
+      dataChannels.push(ch);
+    }
   } else {
     peerConnection.ondatachannel = (event) => {
-      dataChannel = event.channel;
-      setupDataChannel(dataChannel);
+      const ch = event.channel;
+      const idx = parseInt(ch.label.split('_')[1] || '0', 10);
+      setupDataChannel(ch, idx);
+      dataChannels[idx] = ch;
     };
   }
 }
 
-function setupDataChannel(channel) {
+function setupDataChannel(channel, idx) {
   channel.binaryType = 'arraybuffer';
-  // 1MB low threshold taaki pipe kabhi dry na ho
-  channel.bufferedAmountLowThreshold = 1048576;
+  channel.bufferedAmountLowThreshold = 524288; // 512KB
 
   channel.onopen = () => {
-    updateStatus('Connected & Ready', 'connected');
-    if (fileInput.files.length > 0) sendBtn.disabled = false;
+    openChannelsCount++;
+    if (openChannelsCount === NUM_CHANNELS) {
+      updateStatus('Connected & Ready (4x Turbo)', 'connected');
+      if (fileInput.files.length > 0) sendBtn.disabled = false;
+    }
   };
 
   channel.onclose = () => {
+    openChannelsCount = Math.max(0, openChannelsCount - 1);
     updateStatus('Disconnected', 'error');
     sendBtn.disabled = true;
   };
@@ -160,65 +182,87 @@ function setupDataChannel(channel) {
   channel.onmessage = handleReceiveMessage;
 }
 
-// File Input
+// File Input Selection
 fileInput.addEventListener('change', () => {
   if (fileInput.files.length > 0) {
     const sizeMB = (fileInput.files[0].size / (1024 * 1024)).toFixed(2);
     fileLabel.innerText = `📄 ${fileInput.files[0].name} (${sizeMB} MB)`;
-    if (dataChannel && dataChannel.readyState === 'open') {
+    if (openChannelsCount === NUM_CHANNELS) {
       sendBtn.disabled = false;
     }
   }
 });
 
-// HIGH-SPEED: Large File Sending Logic (64KB Chunks + 4MB Pipeline)
+// UI Progress Updater (Used by both Sender via ACK & Receiver directly)
+function renderProgress(bytesDone, totalBytes, labelPrefix) {
+  const percent = Math.min(100, Math.round((bytesDone / totalBytes) * 100));
+  const elapsedSec = Math.max(0.1, (Date.now() - transferStartTime) / 1000);
+  const mbps = (bytesDone / (1024 * 1024) / elapsedSec).toFixed(1);
+
+  progressFill.style.width = percent + '%';
+  progressStatus.innerText = `${labelPrefix}: ${percent}%`;
+  speedText.innerText = `${mbps} MB/s`;
+}
+
+// 4-CHANNEL TURBO SENDER (Offset-tagged packets + Receiver ACK Sync)
 sendBtn.addEventListener('click', async () => {
   const file = fileInput.files[0];
-  if (!file || !dataChannel || dataChannel.readyState !== 'open') return;
+  if (!file || openChannelsCount < NUM_CHANNELS) return;
 
   progressWrapper.style.display = 'block';
   sendBtn.disabled = true;
+  transferStartTime = Date.now();
+  renderProgress(0, file.size, 'Sending');
 
-  dataChannel.send(JSON.stringify({
+  // Send metadata on reliable ordered Channel 0
+  dataChannels[0].send(JSON.stringify({
     type: 'metadata',
     name: file.name,
     size: file.size,
     mime: file.type
   }));
 
-  const chunkSize = 65536; // 64 KB (4x faster than 16 KB)
-  const maxBuffer = 4194304; // 4 MB buffer pipeline
+  const chunkSize = 131072; // 128 KB payload per packet
+  const maxBufferPerChannel = 2097152; // 2 MB per channel (8 MB total pipeline)
   let offset = 0;
-  let lastUiUpdate = 0;
+  let chunkIndex = 0;
+
+  // Promise that resolves when receiver confirms 100% received
+  const ackDonePromise = new Promise((resolve) => {
+    onTransferCompleteAck = resolve;
+  });
 
   try {
     while (offset < file.size) {
-      if (dataChannel.bufferedAmount > maxBuffer) {
+      const ch = dataChannels[chunkIndex % NUM_CHANNELS];
+
+      if (ch.bufferedAmount > maxBufferPerChannel) {
         await new Promise((resolve) => {
-          dataChannel.onbufferedamountlow = () => {
-            dataChannel.onbufferedamountlow = null;
+          ch.onbufferedamountlow = () => {
+            ch.onbufferedamountlow = null;
             resolve();
           };
         });
       }
 
       const slice = file.slice(offset, offset + chunkSize);
-      const buffer = await slice.arrayBuffer();
-      dataChannel.send(buffer);
-      offset += buffer.byteLength;
+      const rawBuffer = await slice.arrayBuffer();
 
-      // Har chunk par DOM update karne ke bajay har 100ms par UI update karo
-      const now = Date.now();
-      if (now - lastUiUpdate > 100 || offset >= file.size) {
-        const percent = Math.min(100, Math.round((offset / file.size) * 100));
-        progressFill.style.width = percent + '%';
-        progressText.innerText = `Sending: ${percent}%`;
-        lastUiUpdate = now;
-      }
+      // Prepend 8-byte Float64 offset header so unordered channels reconstruct exact order
+      const packet = new ArrayBuffer(8 + rawBuffer.byteLength);
+      new DataView(packet).setFloat64(0, offset, true);
+      new Uint8Array(packet, 8).set(new Uint8Array(rawBuffer));
+
+      ch.send(packet);
+      offset += rawBuffer.byteLength;
+      chunkIndex++;
     }
 
+    // Wait until receiver finishes writing 100% so both screens finish together
+    await ackDonePromise;
+
     setTimeout(() => {
-      alert('File sent successfully!');
+      alert('File transferred & verified on both devices!');
       progressWrapper.style.display = 'none';
       progressFill.style.width = '0%';
       sendBtn.disabled = false;
@@ -231,7 +275,7 @@ sendBtn.addEventListener('click', async () => {
   }
 });
 
-// Chat Functions
+// Chat Functions (Always uses reliable Channel 0)
 function appendMessage(text, sender) {
   if (chatPlaceholder) chatPlaceholder.style.display = 'none';
   const msgDiv = document.createElement('div');
@@ -243,9 +287,9 @@ function appendMessage(text, sender) {
 
 function sendChatMessage() {
   const text = chatInput.value.trim();
-  if (!text || !dataChannel || dataChannel.readyState !== 'open') return;
+  if (!text || !dataChannels[0] || dataChannels[0].readyState !== 'open') return;
 
-  dataChannel.send(JSON.stringify({ type: 'chat', text }));
+  dataChannels[0].send(JSON.stringify({ type: 'chat', text }));
   appendMessage(text, 'me');
   chatInput.value = '';
 }
@@ -255,50 +299,76 @@ chatInput.addEventListener('keypress', (e) => {
   if (e.key === 'Enter') sendChatMessage();
 });
 
-// Receiving Logic (Handles both Chat & Large Files)
+// Receiver Logic (Reconstructs out-of-order packets & sends real-time ACK to Sender)
 function handleReceiveMessage(event) {
   if (typeof event.data === 'string') {
     const data = JSON.parse(event.data);
-    
+
     if (data.type === 'metadata') {
       incomingFileInfo = data;
-      receiveBuffer = [];
+      receiveArray = new Uint8Array(data.size);
       receivedSize = 0;
+      lastAckPercent = 0;
+      transferStartTime = Date.now();
       progressWrapper.style.display = 'block';
+      renderProgress(0, data.size, 'Receiving');
+    } else if (data.type === 'ack') {
+      // Sender receives exact progress from Receiver -> Both devices show identical %
+      renderProgress(data.bytes, data.total, 'Sending');
+      if (data.done && onTransferCompleteAck) {
+        onTransferCompleteAck();
+        onTransferCompleteAck = null;
+      }
     } else if (data.type === 'chat') {
       appendMessage(data.text, 'peer');
     }
     return;
   }
 
-  // Binary File Chunks
-  receiveBuffer.push(event.data);
-  receivedSize += event.data.byteLength;
+  // Binary Packet: Extract 8-byte offset + payload
+  if (!incomingFileInfo || !receiveArray) return;
 
-  if (incomingFileInfo) {
-    const percent = Math.min(100, Math.round((receivedSize / incomingFileInfo.size) * 100));
-    progressFill.style.width = percent + '%';
-    progressText.innerText = `Receiving: ${percent}%`;
+  const view = new DataView(event.data);
+  const offset = view.getFloat64(0, true);
+  const chunkBytes = new Uint8Array(event.data, 8);
 
-    if (receivedSize >= incomingFileInfo.size) {
-      const receivedBlob = new Blob(receiveBuffer, { type: incomingFileInfo.mime });
-      const downloadLink = document.createElement('a');
-      downloadLink.href = URL.createObjectURL(receivedBlob);
-      downloadLink.download = incomingFileInfo.name;
-      document.body.appendChild(downloadLink);
-      downloadLink.click();
-      downloadLink.remove();
+  receiveArray.set(chunkBytes, offset);
+  receivedSize += chunkBytes.byteLength;
 
-      // Free memory
-      setTimeout(() => URL.revokeObjectURL(downloadLink.href), 10000);
-      receiveBuffer = [];
-      receivedSize = 0;
-      incomingFileInfo = null;
+  const currentPercent = Math.min(100, Math.round((receivedSize / incomingFileInfo.size) * 100));
+  renderProgress(receivedSize, incomingFileInfo.size, 'Receiving');
 
-      setTimeout(() => {
-        progressWrapper.style.display = 'none';
-        progressFill.style.width = '0%';
-      }, 1000);
+  // Send ACK back to sender every 2% or at 100% completion
+  if (currentPercent - lastAckPercent >= 2 || receivedSize >= incomingFileInfo.size) {
+    lastAckPercent = currentPercent;
+    const isDone = receivedSize >= incomingFileInfo.size;
+    if (dataChannels[0] && dataChannels[0].readyState === 'open') {
+      dataChannels[0].send(JSON.stringify({
+        type: 'ack',
+        bytes: receivedSize,
+        total: incomingFileInfo.size,
+        done: isDone
+      }));
     }
+  }
+
+  if (receivedSize >= incomingFileInfo.size) {
+    const receivedBlob = new Blob([receiveArray], { type: incomingFileInfo.mime });
+    const downloadLink = document.createElement('a');
+    downloadLink.href = URL.createObjectURL(receivedBlob);
+    downloadLink.download = incomingFileInfo.name;
+    document.body.appendChild(downloadLink);
+    downloadLink.click();
+    downloadLink.remove();
+
+    setTimeout(() => URL.revokeObjectURL(downloadLink.href), 10000);
+    receiveArray = null;
+    receivedSize = 0;
+    incomingFileInfo = null;
+
+    setTimeout(() => {
+      progressWrapper.style.display = 'none';
+      progressFill.style.width = '0%';
+    }, 1000);
   }
 }

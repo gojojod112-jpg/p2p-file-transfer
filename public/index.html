@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>AirLink Drop | WebRTC P2P Transfer</title>
+  <title>AirLink Drop | Turbo WebRTC P2P</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
@@ -24,29 +24,82 @@
       justify-content: center;
       background: #090d16;
       background-image: 
-        radial-gradient(at 0% 0%, rgba(99, 102, 241, 0.25) 0px, transparent 50%),
-        radial-gradient(at 100% 100%, rgba(168, 85, 247, 0.2) 0px, transparent 50%);
+        radial-gradient(at 0% 0%, rgba(99, 102, 241, 0.22) 0px, transparent 50%),
+        radial-gradient(at 100% 100%, rgba(16, 185, 129, 0.14) 0px, transparent 50%);
       color: #f8fafc;
-      padding: 24px 16px;
+      padding: 20px 16px;
     }
 
-    .main-card {
+    .app-wrapper {
       width: 100%;
-      max-width: 460px;
+      max-width: 940px;
       background: rgba(18, 24, 38, 0.85);
       border: 1px solid rgba(255, 255, 255, 0.1);
       backdrop-filter: blur(20px);
       -webkit-backdrop-filter: blur(20px);
       border-radius: 28px;
-      padding: 28px 24px;
+      padding: 28px;
       box-shadow: 0 25px 60px -15px rgba(0, 0, 0, 0.7);
+    }
+
+    /* Top Header */
+    .top-bar {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 24px;
+      padding-bottom: 18px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+    }
+
+    .brand h1 {
+      font-size: 1.75rem;
+      font-weight: 800;
+      letter-spacing: -0.5px;
+      background: linear-gradient(135deg, #ffffff 0%, #cbd5e1 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .brand p {
+      color: #94a3b8;
+      font-size: 0.84rem;
+      margin-top: 2px;
+    }
+
+    .header-badges {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .copy-pill {
+      display: none;
+      align-items: center;
+      gap: 6px;
+      padding: 7px 14px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      color: #e2e8f0;
+      font-size: 0.78rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .copy-pill:hover {
+      background: rgba(99, 102, 241, 0.2);
+      border-color: #6366f1;
     }
 
     .badge {
       display: inline-flex;
       align-items: center;
       gap: 6px;
-      padding: 6px 14px;
+      padding: 7px 14px;
       border-radius: 999px;
       background: rgba(99, 102, 241, 0.15);
       border: 1px solid rgba(99, 102, 241, 0.3);
@@ -54,32 +107,36 @@
       font-size: 0.75rem;
       font-weight: 700;
       letter-spacing: 0.5px;
-      margin-bottom: 12px;
     }
 
-    .header h1 {
-      font-size: 1.75rem;
-      font-weight: 800;
-      letter-spacing: -0.5px;
-      background: linear-gradient(135deg, #ffffff 0%, #cbd5e1 100%);
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
-      margin-bottom: 4px;
+    /* 2-Column Split Grid */
+    .split-grid {
+      display: grid;
+      grid-template-columns: 1.1fr 0.9fr;
+      gap: 20px;
+      align-items: stretch;
     }
 
-    .header p {
-      color: #94a3b8;
-      font-size: 0.85rem;
-      line-height: 1.4;
-      margin-bottom: 20px;
+    @media (max-width: 780px) {
+      .split-grid {
+        grid-template-columns: 1fr;
+      }
+      .app-wrapper {
+        padding: 20px 16px;
+      }
+    }
+
+    .left-col {
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
     }
 
     .box-container {
-      background: rgba(11, 15, 25, 0.6);
+      background: rgba(11, 15, 25, 0.65);
       border: 1px solid rgba(255, 255, 255, 0.06);
       border-radius: 20px;
-      padding: 16px;
-      margin-bottom: 16px;
+      padding: 18px;
     }
 
     .box-label {
@@ -89,12 +146,12 @@
       text-transform: uppercase;
       letter-spacing: 0.8px;
       color: #64748b;
-      margin-bottom: 10px;
+      margin-bottom: 12px;
     }
 
     .room-bar, .chat-input-bar {
       display: flex;
-      gap: 8px;
+      gap: 10px;
     }
 
     input[type="text"] {
@@ -102,9 +159,9 @@
       background: rgba(255, 255, 255, 0.04);
       border: 1px solid rgba(255, 255, 255, 0.12);
       border-radius: 12px;
-      padding: 10px 14px;
+      padding: 11px 14px;
       color: #fff;
-      font-size: 0.9rem;
+      font-size: 0.92rem;
       outline: none;
       transition: all 0.2s ease;
     }
@@ -115,7 +172,7 @@
     }
 
     input[type="text"]:disabled {
-      opacity: 0.5;
+      opacity: 0.45;
       cursor: not-allowed;
     }
 
@@ -123,10 +180,10 @@
       background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%);
       color: #fff;
       font-weight: 700;
-      font-size: 0.85rem;
+      font-size: 0.88rem;
       border: none;
       border-radius: 12px;
-      padding: 0 18px;
+      padding: 0 20px;
       cursor: pointer;
       transition: all 0.2s;
     }
@@ -145,8 +202,8 @@
       display: flex;
       align-items: center;
       gap: 8px;
-      margin-top: 10px;
-      font-size: 0.8rem;
+      margin-top: 12px;
+      font-size: 0.82rem;
       color: #94a3b8;
     }
 
@@ -165,9 +222,9 @@
 
     .upload-zone {
       position: relative;
-      border: 2px dashed rgba(255, 255, 255, 0.15);
+      border: 2px dashed rgba(255, 255, 255, 0.14);
       border-radius: 16px;
-      padding: 18px 14px;
+      padding: 34px 16px;
       text-align: center;
       background: rgba(255, 255, 255, 0.02);
       cursor: pointer;
@@ -190,13 +247,13 @@
     }
 
     .upload-icon {
-      font-size: 1.6rem;
-      margin-bottom: 4px;
+      font-size: 2.2rem;
+      margin-bottom: 8px;
       display: block;
     }
 
     .upload-text {
-      font-size: 0.85rem;
+      font-size: 0.88rem;
       color: #cbd5e1;
       font-weight: 500;
       word-break: break-all;
@@ -204,22 +261,22 @@
 
     .send-btn {
       width: 100%;
-      margin-top: 12px;
-      padding: 12px;
+      margin-top: 14px;
+      padding: 13px;
       border-radius: 14px;
       border: none;
-      font-size: 0.9rem;
+      font-size: 0.94rem;
       font-weight: 700;
       color: #fff;
-      background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
-      box-shadow: 0 10px 20px -5px rgba(99, 102, 241, 0.5);
+      background: linear-gradient(135deg, #6366f1 0%, #10b981 100%);
+      box-shadow: 0 10px 20px -5px rgba(99, 102, 241, 0.45);
       cursor: pointer;
       transition: all 0.2s;
     }
 
     .send-btn:hover:not(:disabled) {
-      filter: brightness(1.1);
-      transform: translateY(-2px);
+      filter: brightness(1.08);
+      transform: translateY(-1px);
     }
 
     .send-btn:disabled {
@@ -230,8 +287,17 @@
     }
 
     .progress-bar-container {
-      margin-top: 12px;
+      margin-top: 14px;
       display: none;
+    }
+
+    .progress-stats {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.78rem;
+      color: #cbd5e1;
+      font-weight: 600;
+      margin-bottom: 6px;
     }
 
     .bar-bg {
@@ -246,28 +312,29 @@
       width: 0%;
       height: 100%;
       background: linear-gradient(90deg, #6366f1, #10b981);
-      transition: width 0.15s;
+      transition: width 0.12s ease-out;
     }
 
-    .progress-percent {
-      font-size: 0.76rem;
-      color: #94a3b8;
-      text-align: right;
-      margin-top: 4px;
+    /* Right Column: Full-Height Chat */
+    .chat-panel {
+      display: flex;
+      flex-direction: column;
+      height: 100%;
+      min-height: 410px;
     }
 
-    /* P2P Chat Styles */
     .chat-box {
-      height: 140px;
+      flex: 1;
       overflow-y: auto;
-      background: rgba(0, 0, 0, 0.25);
+      background: rgba(0, 0, 0, 0.28);
       border: 1px solid rgba(255, 255, 255, 0.05);
-      border-radius: 12px;
-      padding: 10px;
-      margin-bottom: 10px;
+      border-radius: 14px;
+      padding: 14px;
+      margin-bottom: 12px;
       display: flex;
       flex-direction: column;
       gap: 8px;
+      max-height: 340px;
     }
 
     .chat-box::-webkit-scrollbar {
@@ -279,11 +346,11 @@
     }
 
     .msg {
-      max-width: 80%;
-      padding: 8px 12px;
-      border-radius: 12px;
-      font-size: 0.84rem;
-      line-height: 1.35;
+      max-width: 82%;
+      padding: 9px 13px;
+      border-radius: 14px;
+      font-size: 0.86rem;
+      line-height: 1.4;
       word-wrap: break-word;
     }
 
@@ -296,14 +363,14 @@
 
     .msg.peer {
       align-self: flex-start;
-      background: rgba(255, 255, 255, 0.08);
+      background: rgba(255, 255, 255, 0.09);
       color: #e2e8f0;
       border-bottom-left-radius: 4px;
     }
 
     .chat-placeholder {
       color: #475569;
-      font-size: 0.8rem;
+      font-size: 0.82rem;
       text-align: center;
       margin: auto;
     }
@@ -311,54 +378,71 @@
 </head>
 <body>
 
-  <div class="main-card">
-    <div class="header">
-      <div class="badge">⚡ DIRECT WEBRTC P2P</div>
-      <h1>AirLink Drop</h1>
-      <p>Direct peer-to-peer file transfer & encrypted chat.</p>
-    </div>
-
-    <!-- Room Connect -->
-    <div class="box-container">
-      <span class="box-label">Connection Channel</span>
-      <div class="room-bar">
-        <input type="text" id="roomInput" placeholder="Room ID (e.g. 777)" />
-        <button id="connectBtn" class="connect-btn">Join</button>
+  <div class="app-wrapper">
+    <!-- Top Header -->
+    <div class="top-bar">
+      <div class="brand">
+        <h1>AirLink Drop</h1>
+        <p>Direct peer-to-peer file transfer & encrypted chat.</p>
       </div>
-      <div class="status-row">
-        <div class="dot" id="statusDot"></div>
-        <span id="statusText">Disconnected</span>
+      <div class="header-badges">
+        <button class="copy-pill" id="copyRoomBtn" title="Copy Room ID">Room ID: <span id="activeRoomLabel"></span> 📋</button>
+        <div class="badge">⚡ 4X TURBO WEBRTC</div>
       </div>
     </div>
 
-    <!-- File Send -->
-    <div class="box-container">
-      <span class="box-label">Select File (No Size Limit)</span>
-      <div class="upload-zone">
-        <input type="file" id="fileInput" />
-        <span class="upload-icon">📂</span>
-        <span class="upload-text" id="fileLabel">Click or drop file to share</span>
-      </div>
-      
-      <button id="sendBtn" class="send-btn" disabled>Send File</button>
-
-      <div class="progress-bar-container" id="progressWrapper">
-        <div class="bar-bg">
-          <div class="bar-fill" id="progressFill"></div>
+    <!-- 2-Column Split Grid -->
+    <div class="split-grid">
+      <!-- Left Column: Connection + File Transfer -->
+      <div class="left-col">
+        <div class="box-container">
+          <span class="box-label">Connection Channel</span>
+          <div class="room-bar">
+            <input type="text" id="roomInput" placeholder="Enter Room ID (e.g. 500)" />
+            <button id="connectBtn" class="connect-btn">Join</button>
+          </div>
+          <div class="status-row">
+            <div class="dot" id="statusDot"></div>
+            <span id="statusText">Disconnected</span>
+          </div>
         </div>
-        <div class="progress-percent" id="progressText">0%</div>
-      </div>
-    </div>
 
-    <!-- Direct P2P Chat -->
-    <div class="box-container" style="margin-bottom: 0;">
-      <span class="box-label">Direct P2P Chat</span>
-      <div class="chat-box" id="chatBox">
-        <div class="chat-placeholder" id="chatPlaceholder">Connect with a peer to start chatting...</div>
+        <div class="box-container" style="flex: 1; display: flex; flex-direction: column; justify-content: space-between;">
+          <div>
+            <span class="box-label">Select File (No Size Limit)</span>
+            <div class="upload-zone">
+              <input type="file" id="fileInput" />
+              <span class="upload-icon">📂</span>
+              <span class="upload-text" id="fileLabel">Click or drop file to share</span>
+            </div>
+          </div>
+
+          <div>
+            <button id="sendBtn" class="send-btn" disabled>Send File</button>
+
+            <div class="progress-bar-container" id="progressWrapper">
+              <div class="progress-stats">
+                <span id="progressStatus">Syncing: 0%</span>
+                <span id="speedText">0.0 MB/s</span>
+              </div>
+              <div class="bar-bg">
+                <div class="bar-fill" id="progressFill"></div>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
-      <div class="chat-input-bar">
-        <input type="text" id="chatInput" placeholder="Type a message..." disabled />
-        <button id="chatSendBtn" class="connect-btn" disabled>Send</button>
+
+      <!-- Right Column: Live P2P Chat -->
+      <div class="box-container chat-panel">
+        <span class="box-label">Direct P2P Chat</span>
+        <div class="chat-box" id="chatBox">
+          <div class="chat-placeholder" id="chatPlaceholder">Connect with a peer to start chatting...</div>
+        </div>
+        <div class="chat-input-bar">
+          <input type="text" id="chatInput" placeholder="Type a message..." disabled />
+          <button id="chatSendBtn" class="connect-btn" disabled>Send</button>
+        </div>
       </div>
     </div>
   </div>
