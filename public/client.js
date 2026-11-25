@@ -21,6 +21,12 @@ const progressWrapper = document.getElementById('progressWrapper');
 const progressFill = document.getElementById('progressFill');
 const progressText = document.getElementById('progressText');
 
+// Chat DOM Elements
+const chatBox = document.getElementById('chatBox');
+const chatPlaceholder = document.getElementById('chatPlaceholder');
+const chatInput = document.getElementById('chatInput');
+const chatSendBtn = document.getElementById('chatSendBtn');
+
 const rtcConfig = {
   iceServers: [
     { urls: 'stun:stun.l.google.com:19302' },
@@ -33,8 +39,12 @@ function updateStatus(text, state) {
   statusText.innerText = text;
   if (state === 'connected') {
     statusDot.classList.add('connected');
+    chatInput.disabled = false;
+    chatSendBtn.disabled = false;
   } else {
     statusDot.classList.remove('connected');
+    chatInput.disabled = true;
+    chatSendBtn.disabled = true;
   }
 }
 
@@ -50,7 +60,7 @@ connectBtn.addEventListener('click', () => {
   updateStatus('Waiting for peer in room...', 'pending');
 });
 
-// 2. Caller Side (Existing user detects new user)
+// 2. Caller Side
 socket.on('user-connected', async () => {
   updateStatus('Peer found. Handshaking...', 'pending');
   createPeer(true);
@@ -72,7 +82,6 @@ socket.on('signal', async (signal) => {
 
     await peerConnection.setRemoteDescription(new RTCSessionDescription(signal.offer));
     
-    // Process queued candidates
     while (iceCandidateQueue.length > 0) {
       const cand = iceCandidateQueue.shift();
       await peerConnection.addIceCandidate(cand);
@@ -132,6 +141,8 @@ function createPeer(isInitiator) {
 
 function setupDataChannel(channel) {
   channel.binaryType = 'arraybuffer';
+  // 256KB threshold taaki buffer overflow na ho
+  channel.bufferedAmountLowThreshold = 262144;
 
   channel.onopen = () => {
     updateStatus('Connected & Ready', 'connected');
@@ -149,21 +160,23 @@ function setupDataChannel(channel) {
 // File Input
 fileInput.addEventListener('change', () => {
   if (fileInput.files.length > 0) {
-    fileLabel.innerText = '📄 ' + fileInput.files[0].name;
+    const sizeMB = (fileInput.files[0].size / (1024 * 1024)).toFixed(2);
+    fileLabel.innerText = `📄 ${fileInput.files[0].name} (${sizeMB} MB)`;
     if (dataChannel && dataChannel.readyState === 'open') {
       sendBtn.disabled = false;
     }
   }
 });
 
-// File Sending Logic
-sendBtn.addEventListener('click', () => {
+// FIXED: Large File Sending Logic with Backpressure Flow Control
+sendBtn.addEventListener('click', async () => {
   const file = fileInput.files[0];
   if (!file || !dataChannel || dataChannel.readyState !== 'open') return;
 
   progressWrapper.style.display = 'block';
   sendBtn.disabled = true;
 
+  // Send metadata first
   dataChannel.send(JSON.stringify({
     type: 'metadata',
     name: file.name,
@@ -171,58 +184,93 @@ sendBtn.addEventListener('click', () => {
     mime: file.type
   }));
 
-  const chunkSize = 16384; // 16 KB chunks
+  const chunkSize = 16384; // 16 KB safe chunk size
   let offset = 0;
-  const reader = new FileReader();
 
-  reader.onload = (e) => {
-    dataChannel.send(e.target.result);
-    offset += e.target.result.byteLength;
+  try {
+    while (offset < file.size) {
+      // Agar buffer 1MB se zyada bhar jaye, toh drain hone ka wait karo
+      if (dataChannel.bufferedAmount > 1048576) {
+        await new Promise((resolve) => {
+          dataChannel.onbufferedamountlow = () => {
+            dataChannel.onbufferedamountlow = null;
+            resolve();
+          };
+        });
+      }
 
-    const percent = Math.min(100, Math.round((offset / file.size) * 100));
-    progressFill.style.width = percent + '%';
-    progressText.innerText = percent + '%';
+      const slice = file.slice(offset, offset + chunkSize);
+      const buffer = await slice.arrayBuffer();
+      dataChannel.send(buffer);
+      offset += buffer.byteLength;
 
-    if (offset < file.size) {
-      readSlice(offset);
-    } else {
-      setTimeout(() => {
-        alert('File sent successfully!');
-        progressWrapper.style.display = 'none';
-        progressFill.style.width = '0%';
-        sendBtn.disabled = false;
-      }, 500);
+      const percent = Math.min(100, Math.round((offset / file.size) * 100));
+      progressFill.style.width = percent + '%';
+      progressText.innerText = `Sending: ${percent}%`;
     }
-  };
 
-  const readSlice = (o) => {
-    const slice = file.slice(o, o + chunkSize);
-    reader.readAsArrayBuffer(slice);
-  };
+    setTimeout(() => {
+      alert('File sent successfully!');
+      progressWrapper.style.display = 'none';
+      progressFill.style.width = '0%';
+      sendBtn.disabled = false;
+    }, 400);
 
-  readSlice(0);
+  } catch (err) {
+    console.error('Transfer failed:', err);
+    alert('Transfer interrupted!');
+    sendBtn.disabled = false;
+  }
 });
 
-// File Receiving Logic
+// Chat Functions
+function appendMessage(text, sender) {
+  if (chatPlaceholder) chatPlaceholder.style.display = 'none';
+  const msgDiv = document.createElement('div');
+  msgDiv.classList.add('msg', sender);
+  msgDiv.textContent = text;
+  chatBox.appendChild(msgDiv);
+  chatBox.scrollTop = chatBox.scrollHeight;
+}
+
+function sendChatMessage() {
+  const text = chatInput.value.trim();
+  if (!text || !dataChannel || dataChannel.readyState !== 'open') return;
+
+  dataChannel.send(JSON.stringify({ type: 'chat', text }));
+  appendMessage(text, 'me');
+  chatInput.value = '';
+}
+
+chatSendBtn.addEventListener('click', sendChatMessage);
+chatInput.addEventListener('keypress', (e) => {
+  if (e.key === 'Enter') sendChatMessage();
+});
+
+// Receiving Logic (Handles both Chat & Large Files)
 function handleReceiveMessage(event) {
   if (typeof event.data === 'string') {
-    const meta = JSON.parse(event.data);
-    if (meta.type === 'metadata') {
-      incomingFileInfo = meta;
+    const data = JSON.parse(event.data);
+    
+    if (data.type === 'metadata') {
+      incomingFileInfo = data;
       receiveBuffer = [];
       receivedSize = 0;
       progressWrapper.style.display = 'block';
+    } else if (data.type === 'chat') {
+      appendMessage(data.text, 'peer');
     }
     return;
   }
 
+  // Binary File Chunks
   receiveBuffer.push(event.data);
   receivedSize += event.data.byteLength;
 
   if (incomingFileInfo) {
     const percent = Math.min(100, Math.round((receivedSize / incomingFileInfo.size) * 100));
     progressFill.style.width = percent + '%';
-    progressText.innerText = percent + '%';
+    progressText.innerText = `Receiving: ${percent}%`;
 
     if (receivedSize >= incomingFileInfo.size) {
       const receivedBlob = new Blob(receiveBuffer, { type: incomingFileInfo.mime });
@@ -233,9 +281,12 @@ function handleReceiveMessage(event) {
       downloadLink.click();
       downloadLink.remove();
 
+      // Free memory
+      setTimeout(() => URL.revokeObjectURL(downloadLink.href), 10000);
       receiveBuffer = [];
       receivedSize = 0;
       incomingFileInfo = null;
+
       setTimeout(() => {
         progressWrapper.style.display = 'none';
         progressFill.style.width = '0%';
