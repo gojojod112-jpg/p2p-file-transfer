@@ -127,8 +127,15 @@ socket.on('signal', async (signal) => {
 });
 
 function createPeer(isInitiator) {
+  // Purana connection agar open ho toh clean karo
+  if (peerConnection) {
+    peerConnection.close();
+    peerConnection = null;
+  }
+  iceCandidateQueue = [];
   dataChannels = [];
   openChannelsCount = 0;
+
   peerConnection = new RTCPeerConnection(rtcConfig);
 
   peerConnection.onicecandidate = (event) => {
