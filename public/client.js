@@ -117,23 +117,7 @@ function createPeer(isInitiator) {
       socket.emit('signal', { room: currentRoom, signal: { candidate: event.candidate } });
     }
   };
-function setupDataChannel(channel) {
-  channel.binaryType = 'arraybuffer';
-  // 1MB low threshold taaki pipe kabhi dry na ho
-  channel.bufferedAmountLowThreshold = 1048576;
 
-  channel.onopen = () => {
-    updateStatus('Connected & Ready', 'connected');
-    if (fileInput.files.length > 0) sendBtn.disabled = false;
-  };
-
-  channel.onclose = () => {
-    updateStatus('Disconnected', 'error');
-    sendBtn.disabled = true;
-  };
-
-  channel.onmessage = handleReceiveMessage;
-}
   peerConnection.onconnectionstatechange = () => {
     if (peerConnection.connectionState === 'connected') {
       updateStatus('Connected & Ready', 'connected');
@@ -157,8 +141,8 @@ function setupDataChannel(channel) {
 
 function setupDataChannel(channel) {
   channel.binaryType = 'arraybuffer';
-  // 256KB threshold taaki buffer overflow na ho
-  channel.bufferedAmountLowThreshold = 262144;
+  // 1MB low threshold taaki pipe kabhi dry na ho
+  channel.bufferedAmountLowThreshold = 1048576;
 
   channel.onopen = () => {
     updateStatus('Connected & Ready', 'connected');
@@ -184,7 +168,7 @@ fileInput.addEventListener('change', () => {
   }
 });
 
-// FIXED: Large File Sending Logic with Backpressure Flow Control
+// HIGH-SPEED: Large File Sending Logic (64KB Chunks + 4MB Pipeline)
 sendBtn.addEventListener('click', async () => {
   const file = fileInput.files[0];
   if (!file || !dataChannel || dataChannel.readyState !== 'open') return;
@@ -192,7 +176,6 @@ sendBtn.addEventListener('click', async () => {
   progressWrapper.style.display = 'block';
   sendBtn.disabled = true;
 
-  // Send metadata first
   dataChannel.send(JSON.stringify({
     type: 'metadata',
     name: file.name,
@@ -200,13 +183,14 @@ sendBtn.addEventListener('click', async () => {
     mime: file.type
   }));
 
-  const chunkSize = 16384; // 16 KB safe chunk size
+  const chunkSize = 65536; // 64 KB (4x faster than 16 KB)
+  const maxBuffer = 4194304; // 4 MB buffer pipeline
   let offset = 0;
+  let lastUiUpdate = 0;
 
   try {
     while (offset < file.size) {
-      // Agar buffer 1MB se zyada bhar jaye, toh drain hone ka wait karo
-      if (dataChannel.bufferedAmount > 1048576) {
+      if (dataChannel.bufferedAmount > maxBuffer) {
         await new Promise((resolve) => {
           dataChannel.onbufferedamountlow = () => {
             dataChannel.onbufferedamountlow = null;
@@ -220,9 +204,14 @@ sendBtn.addEventListener('click', async () => {
       dataChannel.send(buffer);
       offset += buffer.byteLength;
 
-      const percent = Math.min(100, Math.round((offset / file.size) * 100));
-      progressFill.style.width = percent + '%';
-      progressText.innerText = `Sending: ${percent}%`;
+      // Har chunk par DOM update karne ke bajay har 100ms par UI update karo
+      const now = Date.now();
+      if (now - lastUiUpdate > 100 || offset >= file.size) {
+        const percent = Math.min(100, Math.round((offset / file.size) * 100));
+        progressFill.style.width = percent + '%';
+        progressText.innerText = `Sending: ${percent}%`;
+        lastUiUpdate = now;
+      }
     }
 
     setTimeout(() => {
@@ -230,7 +219,7 @@ sendBtn.addEventListener('click', async () => {
       progressWrapper.style.display = 'none';
       progressFill.style.width = '0%';
       sendBtn.disabled = false;
-    }, 400);
+    }, 300);
 
   } catch (err) {
     console.error('Transfer failed:', err);
