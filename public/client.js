@@ -34,15 +34,12 @@ const chatPlaceholder = document.getElementById('chatPlaceholder');
 const chatInput = document.getElementById('chatInput');
 const chatSendBtn = document.getElementById('chatSendBtn');
 
-// Clean, reliable STUN + OpenRelay config (No broken credentials)
+// Exact same STUN config that worked earlier
 const rtcConfig = {
   iceServers: [
     { urls: 'stun:stun.l.google.com:19302' },
-    { urls: 'stun:stun1.l.google.com:19302' },
-    { urls: 'stun:stun2.l.google.com:19302' },
-    { urls: 'stun:stun.relay.metered.ca:80' }
-  ],
-  iceCandidatePoolSize: 10
+    { urls: 'stun:stun1.l.google.com:19302' }
+  ]
 };
 
 function updateStatus(text, state) {
@@ -58,25 +55,17 @@ function updateStatus(text, state) {
   }
 }
 
+// 1. Join Room
 connectBtn.addEventListener('click', () => {
   const room = roomInput.value.trim();
   if (!room) {
     alert('Please enter Room ID');
     return;
   }
-
-  // Purana connection aur queue saaf karo
-  if (peerConnection) {
-    peerConnection.close();
-    peerConnection = null;
-  }
-  iceCandidateQueue = [];
-  dataChannel = null;
-
   currentRoom = room;
   if (activeRoomLabel) activeRoomLabel.innerText = room;
   if (copyRoomBtn) copyRoomBtn.style.display = 'inline-flex';
-  
+
   socket.emit('join-room', currentRoom);
   updateStatus('Waiting for peer in room...', 'pending');
 });
@@ -93,7 +82,7 @@ if (copyRoomBtn) {
   });
 }
 
-// 2. Caller Side (Jab doosra user room join kare)
+// 2. Caller Side
 socket.on('user-connected', async () => {
   updateStatus('Peer found. Handshaking...', 'pending');
   createPeer(true);
@@ -103,64 +92,42 @@ socket.on('user-connected', async () => {
     await peerConnection.setLocalDescription(offer);
     socket.emit('signal', { room: currentRoom, signal: { offer } });
   } catch (err) {
-    console.error('Offer error:', err);
-    updateStatus('Handshake failed (Offer)', 'error');
+    console.error('Error creating offer:', err);
   }
 });
 
 // 3. Signaling Handler
 socket.on('signal', async (signal) => {
-  try {
-    if (signal.offer) {
-      updateStatus('Connecting with peer...', 'pending');
-      createPeer(false);
+  if (signal.offer) {
+    updateStatus('Connecting with peer...', 'pending');
+    createPeer(false);
 
-      await peerConnection.setRemoteDescription(new RTCSessionDescription(signal.offer));
-      while (iceCandidateQueue.length > 0) {
-        await peerConnection.addIceCandidate(iceCandidateQueue.shift());
-      }
-
-      const answer = await peerConnection.createAnswer();
-      await peerConnection.setLocalDescription(answer);
-      socket.emit('signal', { room: currentRoom, signal: { answer } });
-
-    } else if (signal.answer) {
-      if (!peerConnection) return;
-      await peerConnection.setRemoteDescription(new RTCSessionDescription(signal.answer));
-      while (iceCandidateQueue.length > 0) {
-        await peerConnection.addIceCandidate(iceCandidateQueue.shift());
-      }
-
-    } else if (signal.candidate) {
-      const candidate = new RTCIceCandidate(signal.candidate);
-      if (peerConnection && peerConnection.remoteDescription) {
-        await peerConnection.addIceCandidate(candidate);
-      } else {
-        iceCandidateQueue.push(candidate);
-      }
+    await peerConnection.setRemoteDescription(new RTCSessionDescription(signal.offer));
+    while (iceCandidateQueue.length > 0) {
+      await peerConnection.addIceCandidate(iceCandidateQueue.shift());
     }
-  } catch (err) {
-    console.error('Signaling error:', err);
-  }
-});
 
-socket.on('user-disconnected', () => {
-  updateStatus('Peer left the room', 'error');
-  sendBtn.disabled = true;
-  if (peerConnection) {
-    peerConnection.close();
-    peerConnection = null;
+    const answer = await peerConnection.createAnswer();
+    await peerConnection.setLocalDescription(answer);
+    socket.emit('signal', { room: currentRoom, signal: { answer } });
+
+  } else if (signal.answer) {
+    await peerConnection.setRemoteDescription(new RTCSessionDescription(signal.answer));
+    while (iceCandidateQueue.length > 0) {
+      await peerConnection.addIceCandidate(iceCandidateQueue.shift());
+    }
+
+  } else if (signal.candidate) {
+    const candidate = new RTCIceCandidate(signal.candidate);
+    if (peerConnection && peerConnection.remoteDescription) {
+      await peerConnection.addIceCandidate(candidate);
+    } else {
+      iceCandidateQueue.push(candidate);
+    }
   }
 });
 
 function createPeer(isInitiator) {
-  if (peerConnection) {
-    peerConnection.close();
-    peerConnection = null;
-  }
-  iceCandidateQueue = [];
-  dataChannel = null;
-
   peerConnection = new RTCPeerConnection(rtcConfig);
 
   peerConnection.onicecandidate = (event) => {
@@ -169,19 +136,15 @@ function createPeer(isInitiator) {
     }
   };
 
-  peerConnection.oniceconnectionstatechange = () => {
-    const state = peerConnection.iceConnectionState;
-    if (state === 'failed') {
-      updateStatus('Connection failed (Different Network / NAT blocked)', 'error');
-      sendBtn.disabled = true;
-    } else if (state === 'disconnected' || state === 'closed') {
+  peerConnection.onconnectionstatechange = () => {
+    if (['disconnected', 'failed', 'closed'].includes(peerConnection.connectionState)) {
       updateStatus('Disconnected', 'error');
       sendBtn.disabled = true;
     }
   };
 
   if (isInitiator) {
-    dataChannel = peerConnection.createDataChannel('airlink');
+    dataChannel = peerConnection.createDataChannel('fileTransfer');
     setupDataChannel(dataChannel);
   } else {
     peerConnection.ondatachannel = (event) => {
@@ -193,25 +156,10 @@ function createPeer(isInitiator) {
 
 function setupDataChannel(channel) {
   channel.binaryType = 'arraybuffer';
-  channel.bufferedAmountLowThreshold = 1048576; // 1MB
+  channel.bufferedAmountLowThreshold = 524288; // 512KB
 
-  channel.onopen = async () => {
-    let routeType = 'Ready';
-    try {
-      const stats = await peerConnection.getStats();
-      stats.forEach((report) => {
-        if (report.type === 'candidate-pair' && report.state === 'succeeded') {
-          const localCand = stats.get(report.localCandidateId);
-          if (localCand && localCand.candidateType === 'host') {
-            routeType = 'Direct Wi-Fi / Hotspot';
-          } else {
-            routeType = 'Internet P2P';
-          }
-        }
-      });
-    } catch (e) {}
-
-    updateStatus(`Connected (${routeType})`, 'connected');
+  channel.onopen = () => {
+    updateStatus('Connected & Ready', 'connected');
     if (fileInput.files.length > 0) sendBtn.disabled = false;
   };
 
@@ -220,14 +168,9 @@ function setupDataChannel(channel) {
     sendBtn.disabled = true;
   };
 
-  channel.onerror = (err) => {
-    console.error('DataChannel error:', err);
-  };
-
   channel.onmessage = handleReceiveMessage;
 }
 
-// File Input Selection
 fileInput.addEventListener('change', () => {
   if (fileInput.files.length > 0) {
     const sizeMB = (fileInput.files[0].size / (1024 * 1024)).toFixed(2);
@@ -238,7 +181,6 @@ fileInput.addEventListener('change', () => {
   }
 });
 
-// UI Progress Updater
 function renderProgress(bytesDone, totalBytes, labelPrefix) {
   const percent = Math.min(100, Math.round((bytesDone / totalBytes) * 100));
   const elapsedSec = Math.max(0.1, (Date.now() - transferStartTime) / 1000);
@@ -249,7 +191,7 @@ function renderProgress(bytesDone, totalBytes, labelPrefix) {
   if (speedText) speedText.innerText = `${mbps} MB/s`;
 }
 
-// High-Speed File Sender (128KB chunks + 8MB buffer + ACK Sync)
+// Fast Transfer + Synced Percentage
 sendBtn.addEventListener('click', async () => {
   const file = fileInput.files[0];
   if (!file || !dataChannel || dataChannel.readyState !== 'open') return;
@@ -267,7 +209,7 @@ sendBtn.addEventListener('click', async () => {
   }));
 
   const chunkSize = 131072; // 128 KB
-  const maxBuffer = 8388608; // 8 MB pipeline
+  const maxBuffer = 6291456; // 6 MB pipeline
   let offset = 0;
 
   const ackDonePromise = new Promise((resolve) => {
@@ -294,7 +236,7 @@ sendBtn.addEventListener('click', async () => {
     await ackDonePromise;
 
     setTimeout(() => {
-      alert('File transferred & verified on both devices!');
+      alert('File transferred successfully!');
       progressWrapper.style.display = 'none';
       progressFill.style.width = '0%';
       sendBtn.disabled = false;
