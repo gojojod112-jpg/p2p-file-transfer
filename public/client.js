@@ -58,13 +58,21 @@ function updateStatus(text, state) {
   }
 }
 
-// 1. Join Room
 connectBtn.addEventListener('click', () => {
   const room = roomInput.value.trim();
   if (!room) {
     alert('Please enter Room ID');
     return;
   }
+
+  // Purana connection aur queue saaf karo
+  if (peerConnection) {
+    peerConnection.close();
+    peerConnection = null;
+  }
+  iceCandidateQueue = [];
+  dataChannel = null;
+
   currentRoom = room;
   if (activeRoomLabel) activeRoomLabel.innerText = room;
   if (copyRoomBtn) copyRoomBtn.style.display = 'inline-flex';
