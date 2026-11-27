@@ -1,4 +1,6 @@
-const socket = io();
+const socket = io({
+  transports: ['websocket', 'polling']
+});
 
 let peerConnection = null;
 let dataChannel = null;
@@ -34,7 +36,6 @@ const chatPlaceholder = document.getElementById('chatPlaceholder');
 const chatInput = document.getElementById('chatInput');
 const chatSendBtn = document.getElementById('chatSendBtn');
 
-// Exact same STUN config that worked earlier
 const rtcConfig = {
   iceServers: [
     { urls: 'stun:stun.l.google.com:19302' },
@@ -55,6 +56,15 @@ function updateStatus(text, state) {
   }
 }
 
+// Socket Connection Check
+socket.on('connect', () => {
+  updateStatus('Server Ready • Enter Room ID', 'pending');
+});
+
+socket.on('disconnect', () => {
+  updateStatus('Server Disconnected (Reconnecting...)', 'error');
+});
+
 // 1. Join Room
 connectBtn.addEventListener('click', () => {
   const room = roomInput.value.trim();
@@ -62,12 +72,17 @@ connectBtn.addEventListener('click', () => {
     alert('Please enter Room ID');
     return;
   }
+  if (!socket.connected) {
+    alert('Server se connection nahi bana hai, 2 second ruk kar try karo.');
+    return;
+  }
+
   currentRoom = room;
   if (activeRoomLabel) activeRoomLabel.innerText = room;
   if (copyRoomBtn) copyRoomBtn.style.display = 'inline-flex';
 
   socket.emit('join-room', currentRoom);
-  updateStatus('Waiting for peer in room...', 'pending');
+  updateStatus(`Joined Room ${room} • Waiting for peer...`, 'pending');
 });
 
 roomInput.addEventListener('keypress', (e) => {
@@ -82,52 +97,63 @@ if (copyRoomBtn) {
   });
 }
 
-// 2. Caller Side
+// 2. Caller Side (Jab doosra user room join kare)
 socket.on('user-connected', async () => {
-  updateStatus('Peer found. Handshaking...', 'pending');
+  updateStatus('Step 1/4: Peer found, sending Offer...', 'pending');
   createPeer(true);
 
   try {
     const offer = await peerConnection.createOffer();
     await peerConnection.setLocalDescription(offer);
     socket.emit('signal', { room: currentRoom, signal: { offer } });
+    updateStatus('Step 2/4: Offer sent, waiting for Answer...', 'pending');
   } catch (err) {
-    console.error('Error creating offer:', err);
+    updateStatus('Error at Offer: ' + err.message, 'error');
   }
 });
 
 // 3. Signaling Handler
 socket.on('signal', async (signal) => {
-  if (signal.offer) {
-    updateStatus('Connecting with peer...', 'pending');
-    createPeer(false);
+  try {
+    if (signal.offer) {
+      updateStatus('Step 2/4: Offer received, sending Answer...', 'pending');
+      createPeer(false);
 
-    await peerConnection.setRemoteDescription(new RTCSessionDescription(signal.offer));
-    while (iceCandidateQueue.length > 0) {
-      await peerConnection.addIceCandidate(iceCandidateQueue.shift());
+      await peerConnection.setRemoteDescription(new RTCSessionDescription(signal.offer));
+      while (iceCandidateQueue.length > 0) {
+        await peerConnection.addIceCandidate(iceCandidateQueue.shift());
+      }
+
+      const answer = await peerConnection.createAnswer();
+      await peerConnection.setLocalDescription(answer);
+      socket.emit('signal', { room: currentRoom, signal: { answer } });
+      updateStatus('Step 3/4: Answer sent, negotiating network...', 'pending');
+
+    } else if (signal.answer) {
+      updateStatus('Step 3/4: Answer received, negotiating network...', 'pending');
+      await peerConnection.setRemoteDescription(new RTCSessionDescription(signal.answer));
+      while (iceCandidateQueue.length > 0) {
+        await peerConnection.addIceCandidate(iceCandidateQueue.shift());
+      }
+
+    } else if (signal.candidate) {
+      const candidate = new RTCIceCandidate(signal.candidate);
+      if (peerConnection && peerConnection.remoteDescription) {
+        await peerConnection.addIceCandidate(candidate);
+      } else {
+        iceCandidateQueue.push(candidate);
+      }
     }
-
-    const answer = await peerConnection.createAnswer();
-    await peerConnection.setLocalDescription(answer);
-    socket.emit('signal', { room: currentRoom, signal: { answer } });
-
-  } else if (signal.answer) {
-    await peerConnection.setRemoteDescription(new RTCSessionDescription(signal.answer));
-    while (iceCandidateQueue.length > 0) {
-      await peerConnection.addIceCandidate(iceCandidateQueue.shift());
-    }
-
-  } else if (signal.candidate) {
-    const candidate = new RTCIceCandidate(signal.candidate);
-    if (peerConnection && peerConnection.remoteDescription) {
-      await peerConnection.addIceCandidate(candidate);
-    } else {
-      iceCandidateQueue.push(candidate);
-    }
+  } catch (err) {
+    updateStatus('Signal Error: ' + err.message, 'error');
   }
 });
 
 function createPeer(isInitiator) {
+  if (peerConnection) {
+    peerConnection.close();
+  }
+  iceCandidateQueue = [];
   peerConnection = new RTCPeerConnection(rtcConfig);
 
   peerConnection.onicecandidate = (event) => {
@@ -136,8 +162,14 @@ function createPeer(isInitiator) {
     }
   };
 
-  peerConnection.onconnectionstatechange = () => {
-    if (['disconnected', 'failed', 'closed'].includes(peerConnection.connectionState)) {
+  peerConnection.oniceconnectionstatechange = () => {
+    const iceState = peerConnection.iceConnectionState;
+    updateStatus(`Step 4/4: Network ICE -> ${iceState}`, iceState === 'connected' || iceState === 'completed' ? 'connected' : 'pending');
+
+    if (iceState === 'failed') {
+      updateStatus('Failed: Network/Hotspot blocked P2P (Try same Wi-Fi/Hotspot)', 'error');
+      sendBtn.disabled = true;
+    } else if (iceState === 'disconnected' || iceState === 'closed') {
       updateStatus('Disconnected', 'error');
       sendBtn.disabled = true;
     }
@@ -156,7 +188,7 @@ function createPeer(isInitiator) {
 
 function setupDataChannel(channel) {
   channel.binaryType = 'arraybuffer';
-  channel.bufferedAmountLowThreshold = 524288; // 512KB
+  channel.bufferedAmountLowThreshold = 524288;
 
   channel.onopen = () => {
     updateStatus('Connected & Ready', 'connected');
@@ -243,7 +275,6 @@ sendBtn.addEventListener('click', async () => {
     }, 300);
 
   } catch (err) {
-    console.error('Transfer failed:', err);
     alert('Transfer interrupted!');
     sendBtn.disabled = false;
   }
