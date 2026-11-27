@@ -187,7 +187,7 @@ function createPeer(isInitiator) {
     updateStatus(`Step 4/4: Network ICE -> ${iceState}`, iceState === 'connected' || iceState === 'completed' ? 'connected' : 'pending');
 
     if (iceState === 'failed') {
-      updateStatus('Failed: Network/Hotspot blocked P2P (Try same Wi-Fi/Hotspot)', 'error');
+      updateStatus('Failed: Network/Hotspot blocked P2P', 'error');
       sendBtn.disabled = true;
     } else if (iceState === 'disconnected' || iceState === 'closed') {
       updateStatus('Disconnected', 'error');
@@ -241,18 +241,6 @@ function setupDataChannel(channel) {
 
   channel.onmessage = handleReceiveMessage;
 }
-  channel.onopen = () => {
-    updateStatus('Connected & Ready', 'connected');
-    if (fileInput.files.length > 0) sendBtn.disabled = false;
-  };
-
-  channel.onclose = () => {
-    updateStatus('Disconnected', 'error');
-    sendBtn.disabled = true;
-  };
-
-  channel.onmessage = handleReceiveMessage;
-}
 
 fileInput.addEventListener('change', () => {
   if (fileInput.files.length > 0) {
@@ -274,10 +262,8 @@ function renderProgress(bytesDone, totalBytes, labelPrefix) {
   if (speedText) speedText.innerText = `${mbps} MB/s`;
 }
 
-// Fast Transfer + Synced Percentage
+// Fast Transfer + Synced Percentage (256KB Chunks + 12MB Buffer)
 sendBtn.addEventListener('click', async () => {
-  const chunkSize = 262144; // 256 KB (2x larger packets)
-  const maxBuffer = 12582912; // 12 MB pipeline buffer
   const file = fileInput.files[0];
   if (!file || !dataChannel || dataChannel.readyState !== 'open') return;
 
@@ -293,8 +279,8 @@ sendBtn.addEventListener('click', async () => {
     mime: file.type
   }));
 
-  const chunkSize = 131072; // 128 KB
-  const maxBuffer = 6291456; // 6 MB pipeline
+  const chunkSize = 262144; // 256 KB
+  const maxBuffer = 12582912; // 12 MB pipeline
   let offset = 0;
 
   const ackDonePromise = new Promise((resolve) => {
@@ -352,7 +338,7 @@ function sendChatMessage() {
   chatInput.value = '';
 }
 
-chat('click', sendChatMessage);
+chatSendBtn.addEventListener('click', sendChatMessage);
 chatInput.addEventListener('keypress', (e) => {
   if (e.key === 'Enter') sendChatMessage();
 });
