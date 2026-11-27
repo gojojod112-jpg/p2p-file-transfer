@@ -208,8 +208,39 @@ function createPeer(isInitiator) {
 
 function setupDataChannel(channel) {
   channel.binaryType = 'arraybuffer';
-  channel.bufferedAmountLowThreshold = 524288;
+  channel.bufferedAmountLowThreshold = 2097152; // 2MB threshold
 
+  channel.onopen = async () => {
+    let mode = 'Connected & Ready';
+    try {
+      const stats = await peerConnection.getStats();
+      stats.forEach((report) => {
+        if (report.type === 'candidate-pair' && report.state === 'succeeded') {
+          const localCand = stats.get(report.localCandidateId);
+          if (localCand) {
+            if (localCand.candidateType === 'host') {
+              mode = 'Connected • Direct Wi-Fi (Max Speed)';
+            } else if (localCand.candidateType === 'relay') {
+              mode = 'Connected • Cloud Relay (TURN)';
+            } else {
+              mode = 'Connected • Direct P2P';
+            }
+          }
+        }
+      });
+    } catch (e) {}
+
+    updateStatus(mode, 'connected');
+    if (fileInput.files.length > 0) sendBtn.disabled = false;
+  };
+
+  channel.onclose = () => {
+    updateStatus('Disconnected', 'error');
+    sendBtn.disabled = true;
+  };
+
+  channel.onmessage = handleReceiveMessage;
+}
   channel.onopen = () => {
     updateStatus('Connected & Ready', 'connected');
     if (fileInput.files.length > 0) sendBtn.disabled = false;
@@ -245,6 +276,8 @@ function renderProgress(bytesDone, totalBytes, labelPrefix) {
 
 // Fast Transfer + Synced Percentage
 sendBtn.addEventListener('click', async () => {
+  const chunkSize = 262144; // 256 KB (2x larger packets)
+  const maxBuffer = 12582912; // 12 MB pipeline buffer
   const file = fileInput.files[0];
   if (!file || !dataChannel || dataChannel.readyState !== 'open') return;
 
@@ -319,7 +352,7 @@ function sendChatMessage() {
   chatInput.value = '';
 }
 
-chatSendBtn.addEventListener('click', sendChatMessage);
+chat('click', sendChatMessage);
 chatInput.addEventListener('keypress', (e) => {
   if (e.key === 'Enter') sendChatMessage();
 });
