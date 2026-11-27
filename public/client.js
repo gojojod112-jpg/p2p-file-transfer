@@ -39,7 +39,27 @@ const chatSendBtn = document.getElementById('chatSendBtn');
 const rtcConfig = {
   iceServers: [
     { urls: 'stun:stun.l.google.com:19302' },
-    { urls: 'stun:stun1.l.google.com:19302' }
+    { urls: 'stun:stun.relay.metered.ca:80' },
+    {
+      urls: 'turn:global.relay.metered.ca:80',
+      username: 'cf2f73a9f9b2391f95501168',
+      credential: '0u+I2IjWFllcLGu3',
+    },
+    {
+      urls: 'turn:global.relay.metered.ca:80?transport=tcp',
+      username: 'cf2f73a9f9b2391f95501168',
+      credential: '0u+I2IjWFllcLGu3',
+    },
+    {
+      urls: 'turn:global.relay.metered.ca:443',
+      username: 'cf2f73a9f9b2391f95501168',
+      credential: '0u+I2IjWFllcLGu3',
+    },
+    {
+      urls: 'turns:global.relay.metered.ca:443?transport=tcp',
+      username: 'cf2f73a9f9b2391f95501168',
+      credential: '0u+I2IjWFllcLGu3',
+    }
   ]
 };
 
